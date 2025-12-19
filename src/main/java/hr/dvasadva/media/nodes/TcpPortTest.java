@@ -1,4 +1,4 @@
-package hr.dvasadva.zookeeper;
+package hr.dvasadva.media.nodes;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;

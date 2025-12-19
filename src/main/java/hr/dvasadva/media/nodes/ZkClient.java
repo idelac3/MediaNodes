@@ -1,4 +1,4 @@
-package hr.dvasadva.zookeeper;
+package hr.dvasadva.media.nodes;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -11,10 +11,11 @@ import java.util.stream.Collectors;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.Watcher.Event.KeeperState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import hr.dvasadva.zookeeper.MediaNodes.Keys;
+import hr.dvasadva.media.nodes.MediaNodes.Keys;
 
 /**
  * A Zookeeper client that will update list of nodes,
@@ -128,7 +129,7 @@ public class ZkClient implements Runnable, Watcher {
 			
 			log.info(String.format("Connecting to the Zookeeper at %s ...", connString));
 			
-			this.zkConn = new ZookeeperConnection(connString, ZookeeperDefault.DEFAULT_SESSION_TIMEOUT, this);
+			this.zkConn = new ZookeeperConnection(connString, 1000 * ZookeeperDefault.DEFAULT_SESSION_TIMEOUT, this);
 
 		}
 		catch (final IOException ioException) {
@@ -192,6 +193,26 @@ public class ZkClient implements Runnable, Watcher {
 		if (nullEvent == false) {
 		
 			log.info(String.format("Got Zookeeper event: '%s' path: '%s'.", event.getType(), event.getPath()));
+		}
+		
+		// Reconnect, on session expired event.
+		if (Objects.equals(KeeperState.Expired, event.getState()) == true) {
+		
+			if (this.zkConn != null) {
+				
+				try {
+					
+					this.zkConn.close();
+					this.start();
+					
+					return;
+				}
+				catch (final Exception ex) {
+					
+					log.error(String.format("Can't terminate broken connection: %s", ex.getMessage()));
+				}
+				
+			}
 		}
 		
 		final String mediaRecorderZnode = prop.getProperty(Keys.MEDIA_RECORDER_ZNODE.toString());

@@ -1,4 +1,4 @@
-package hr.dvasadva.zookeeper;
+package hr.dvasadva.media.nodes;
 
 import java.io.IOException;
 import java.net.ServerSocket;
@@ -10,7 +10,7 @@ import java.util.Properties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import hr.dvasadva.zookeeper.MediaNodes.Keys;
+import hr.dvasadva.media.nodes.MediaNodes.Keys;
 
 /**
  * Instance of TCP listener,
