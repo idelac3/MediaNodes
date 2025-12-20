@@ -49,7 +49,7 @@ Program will bind to **5111** and server requests.
 
 The `MEDIA_RECORDER_ZNODE` by default is **/media-recorder**, and you probably don't need to modify it.
 
-Alternative is to use program arguments: `--zookeeper-server` `--tcp-listening-port` and `--media-recorder-znode`.
+Alternative is to use program arguments: `--zookeeper-server`, `--tcp-listening-port`, `--http-listening-port` and `--media-recorder-znode`.
 
 Program arguments override the env. variables, if specified.
 
@@ -57,6 +57,7 @@ Program arguments override the env. variables, if specified.
 | ---------------------- | ------------------------ | ---------------- |
 | `ZOOKEEPER_SERVER`     | `--zookeeper-server`     |  localhost:2181  |
 | `TCP_LISTENING_PORT`   | `--tcp-listening-port`   |  5001            |
+| `HTTP_LISTENING_PORT`  | `--http-listening-port`  |  5002            |
 | `MEDIA_RECORDER_ZNODE` | `--media-recorder-znode` |  /media-recorder |
 
 The table shows default values, and corresponding program arguments.

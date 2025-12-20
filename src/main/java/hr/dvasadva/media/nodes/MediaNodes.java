@@ -8,6 +8,9 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import hr.dvasadva.media.nodes.http.HttpServer;
+import hr.dvasadva.media.nodes.tcp.TcpServer;
+
 /**
  * Main program.
  * 
@@ -23,6 +26,7 @@ public class MediaNodes {
 	public static enum Keys {
 		ZOOKEEPER_SERVER("ZOOKEEPER_SERVER"),
 		TCP_LISTENING_PORT("TCP_LISTENING_PORT"),
+		HTTP_LISTENING_PORT("HTTP_LISTENING_PORT"),
 		MEDIA_RECORDER_ZNODE("MEDIA_RECORDER_ZNODE")
 		;
 
@@ -38,7 +42,7 @@ public class MediaNodes {
 		
 	private static final Logger log = LoggerFactory.getLogger(MediaNodes.class);
 	
-	public static void main(final String[] args) throws IOException {
+	public static void main(final String[] args) throws IOException, InterruptedException {
 
 		//
 		// First configure the default values.
@@ -74,11 +78,18 @@ public class MediaNodes {
 		tcpServer.start();
 		
 		//
+		// HTTP interface test.
+		//
+		
+		final HttpServer httpServer = new HttpServer(prop, zkClient);
+		httpServer.start();
+
+		//
 		// Install SIGTERM, aka Ctrl+C hook to terminate properly.
 		//
 		
 		Runtime.getRuntime().addShutdownHook(
-				getShutdownThread(zkClient, tcpServer));
+				getShutdownThread(zkClient, tcpServer, httpServer));
 	}
 
 	/**
@@ -90,6 +101,7 @@ public class MediaNodes {
 				ZookeeperDefault.DEFAULT_CONNECTION_STRING);
 		
 		prop.setProperty(Keys.TCP_LISTENING_PORT.toString(), "5001");
+		prop.setProperty(Keys.HTTP_LISTENING_PORT.toString(), "5002");
 		
 		prop.setProperty(Keys.MEDIA_RECORDER_ZNODE.toString(), "/media-recorder");
 		
@@ -145,6 +157,10 @@ public class MediaNodes {
 					
 					currKey = Keys.TCP_LISTENING_PORT;
 				}
+				else if (arg.equals("-w") || arg.equals("--http-listening-port")) {
+					
+					currKey = Keys.HTTP_LISTENING_PORT;
+				}
 				else if (arg.equals("-m") || arg.equals("--media-recorder-znode")) {
 					
 					currKey = Keys.MEDIA_RECORDER_ZNODE;
@@ -183,10 +199,12 @@ public class MediaNodes {
 	 * 
 	 * @param zkClient	instance of zookeeper client
 	 * @param tcpServer	instance of TCP server
+	 * @param httpServer instance of {@link HttpServer}
 	 * 
 	 * @return	a {@link Thread} that will invoke shutdown
 	 */
-	private static Thread getShutdownThread(final ZkClient zkClient, final TcpServer tcpServer) {
+	private static Thread getShutdownThread(final ZkClient zkClient, final TcpServer tcpServer,
+			final HttpServer httpServer) {
 		
 		return new Thread( () -> {
 			
@@ -194,8 +212,9 @@ public class MediaNodes {
 			
 				zkClient.terminate();
 				tcpServer.terminate();
+				httpServer.terminate();
 			}
-			catch (final IOException | InterruptedException ex) {
+			catch (final InterruptedException ex) {
 				
 				log.error("Can't shutdown properly.", ex);
 			}
@@ -211,6 +230,7 @@ Program arguments:
 				
 				--zookeeper-server, -z		configure IP address and port of the Zookeeper service to connect to
 				--tcp-listening-port, -t	bind and listen on TCP port
+				--http-listening-port, -t	bind and listen on HTTP port
 				--media-recorder-znode, -m	path to the znode on the Zookeeper where Media Recorders are registered
 				
 E.g.				  
