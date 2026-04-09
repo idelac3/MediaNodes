@@ -3,18 +3,28 @@ package hr.dvasadva.media.nodes;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.apache.zookeeper.KeeperException;
+import org.apache.zookeeper.KeeperException.SessionExpiredException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
 import org.apache.zookeeper.Watcher.Event.KeeperState;
+import org.apache.zookeeper.ZooKeeper.States;
+import org.slf4j.ILoggerFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.Appender;
 import hr.dvasadva.media.nodes.MediaNodes.Keys;
 
 /**
@@ -50,6 +60,23 @@ public class ZkClient implements Runnable, Watcher {
 		
 		final String connString = prop.getProperty(Keys.ZOOKEEPER_SERVER.toString());
 		
+		final TcpPortTest tester = getTcpPortTester();
+		
+		final boolean testResult = tester.test();
+		if (testResult == false) {
+			
+			log.warn(String.format("Can't establish connection to '%s'.", connString));
+		}
+		
+		final Thread zkClientThread = new Thread(this,
+				String.format("ZkClient-[%s]", connString));
+		zkClientThread.start();
+	}
+	
+	private TcpPortTest getTcpPortTester() {
+
+		final String connString = prop.getProperty(Keys.ZOOKEEPER_SERVER.toString());
+		
 		int pos = connString.indexOf(':');
 		
 		final String host;
@@ -66,15 +93,8 @@ public class ZkClient implements Runnable, Watcher {
 		}
 		
 		final TcpPortTest tester = new TcpPortTest(host, port, 10, 100);
-		final boolean testResult = tester.test();
-		if (testResult == false) {
-			
-			log.warn(String.format("Can't establish connection to '%s'.", connString));
-		}
 		
-		final Thread zkClientThread = new Thread(this,
-				String.format("ZkClient-[%s]", connString));
-		zkClientThread.start();
+		return tester;
 	}
 	
 	/**
@@ -84,11 +104,27 @@ public class ZkClient implements Runnable, Watcher {
 	 */
 	public void terminate() throws InterruptedException {
 		
-		if (this.zkConn != null) {
+		if (this.zkConn != null && this.zkConn.isClosed() == false) {
 			
 			log.info("Terminating ZkClient ...");
+			
+			clearResult();
+			
+			this.watchInstalled = false;
+			
 			this.zkConn.close();
 		}
+	}
+	
+	/**
+	 * Check the Zookeeper client connection state,
+	 * e.g. {@link States#CONNECTED} or {@link States#CLOSED}.
+	 * 
+	 * @return {@link ZookeeperConnection} state
+	 */
+	public States getState() {
+		
+		return this.zkConn.getState();
 	}
 	
 	/**
@@ -123,6 +159,15 @@ public class ZkClient implements Runnable, Watcher {
 	@Override
 	public void run() {
 		
+		//
+		// Open the Zookeeper connection,
+		// and pass the control to the:
+		//
+		//  public void process(WatchedEvent)
+		//
+		// method below.
+		//
+		
 		try {
 		
 			final String connString = prop.getProperty(Keys.ZOOKEEPER_SERVER.toString());
@@ -134,7 +179,129 @@ public class ZkClient implements Runnable, Watcher {
 		}
 		catch (final IOException ioException) {
 			
-			log.error(String.format("IOError: %s", ioException.getMessage()));
+			log.error(String.format("IO Error: %s", ioException.getMessage()));
+		}
+		
+		//
+		// Install the ZkBaseAppender, an special logging appender, that acts like a 
+		//  callback function that will re-initiate a Zookeeper connection.
+		//
+		
+		final BlockingQueue<ILoggingEvent> queue = new ArrayBlockingQueue<>(64);
+		
+		installZkAppender(queue);
+
+		//
+		// Main loop:
+		//  - verify that the zk SendThread and EventThread threads are present
+		//  - if present, then simply wait on the ZkAppender instance for new log event
+		//  - if zk threads are gone, then check the connectivity and (re)start the Zk connection
+		//
+		
+		String lastLogMsg = null;
+		
+		boolean running = true;
+		while (running == true) {
+
+			//
+			// Dump the list of active threads.
+			//
+			
+			final int activeThreads = Thread.activeCount();
+			final Thread[] tArray = new Thread[activeThreads];
+			Thread.enumerate(tArray);
+			
+			//
+			// Look for something like 'ZkClient-[10.11.12.1]-SendThread(...)'
+			//
+			
+			boolean foundZkClientSendThread = false, foundZkClientEventThread = false;
+			
+			for (final Thread thread : tArray) {
+				
+				if (thread == null) {
+					
+					continue;
+				}
+				
+				final String threadName = thread.getName();
+				
+				if (threadName.startsWith("ZkClient") == true
+						&& threadName.contains("SendThread") == true
+						&& thread.isDaemon() == true) {
+					
+					foundZkClientSendThread = true;							
+				}
+				
+				if (threadName.startsWith("ZkClient") == true
+						&& threadName.contains("EventThread") == true
+						&& thread.isDaemon() == true) {
+					
+					foundZkClientEventThread = true;							
+				}
+			}
+			
+			try {
+				
+				if (foundZkClientEventThread == false || foundZkClientSendThread == false) {
+					
+					//
+					// If the Zk threads are gone, 
+					//  then check the connectivity and (re)start the ZkClient instance.
+					//
+					
+					TimeUnit.SECONDS.sleep(1);
+					
+					terminate(); // This invocation is idempotent, doesn't matter if called multiple times.
+				
+					//
+					// Check the connectivity and start again ZkClient instance.
+					//
+					
+					final TcpPortTest tester = getTcpPortTester();
+					final boolean testResult = tester.test();
+					if (testResult == true) {
+
+						// Start new ZkClient thread.
+						start();
+						
+						// Leave this thread, no need to keep it running anymore.
+						break;
+					}
+					else {
+						
+						// Repeat here the main while(...) loop,
+						// in hope that the connectivity will get back.
+						continue;
+					}
+				}
+				
+				//
+				// Wait for the log events, e.g. from the 'org.apache.zookeeper.ClientCnxn'.
+				// Such events occur when the zk threads have been gone.
+				//
+					
+				final ILoggingEvent event = queue.poll(1L, TimeUnit.SECONDS);
+			
+				if (event != null &&
+						log instanceof ch.qos.logback.classic.Logger) {
+				
+					final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) log;
+					
+					final String logMsg = event.getFormattedMessage();
+					
+					if (SimilarString.compare(lastLogMsg, logMsg) == false) {
+					
+						lastLogMsg = logMsg;
+						
+						logger.callAppenders(event);
+					}
+				}
+			}
+			catch (final InterruptedException interruptedEx) {
+			
+				running = false;
+			}
 		}
 	}
 
@@ -167,6 +334,10 @@ public class ZkClient implements Runnable, Watcher {
 						String.format("Media Recorder List: %s", list));
 			}
 		}
+		catch (final SessionExpiredException sessionExpiredException) {
+			
+			log.warn(sessionExpiredException.getMessage());
+		}
 		catch (final KeeperException keeperException) {
 			
 			log.error("Can't read the znode list.", keeperException);
@@ -195,23 +366,22 @@ public class ZkClient implements Runnable, Watcher {
 			log.info(String.format("Got Zookeeper event: '%s' path: '%s'.", event.getType(), event.getPath()));
 		}
 		
-		// Reconnect, on session expired event.
-		if (Objects.equals(KeeperState.Expired, event.getState()) == true) {
+		//
+		// Ignore events like session expired / closed / disconnected.
+		//
+		
+		final List<KeeperState> closedStates = List.of(KeeperState.Expired, KeeperState.Disconnected, KeeperState.Closed);
+		
+		if (closedStates.contains(event.getState()) == true) {
 		
 			if (this.zkConn != null) {
+
+				// We don't want to execute code below, that will fetch the node list
+				// from the Zookeeper, in case the TCP connection is lost.
 				
-				try {
-					
-					this.zkConn.close();
-					this.start();
-					
-					return;
-				}
-				catch (final Exception ex) {
-					
-					log.error(String.format("Can't terminate broken connection: %s", ex.getMessage()));
-				}
-				
+				// Upon re-establishment of the connection, 
+				// the node list will refresh, anyway.
+				return;
 			}
 		}
 		
@@ -246,6 +416,57 @@ public class ZkClient implements Runnable, Watcher {
 		} catch (final InterruptedException interruptedException) {
 
 			log.error("Interrupted.", interruptedException);
+		}
+	}
+	
+	public static void installZkAppender(final BlockingQueue<ILoggingEvent> queue) {
+	
+		//
+		// Adjust the logging for the org.apache.zookeeper.* class(es).
+		//
+		
+		ILoggerFactory factory = LoggerFactory.getILoggerFactory();
+	
+		if (factory instanceof LoggerContext) {
+			
+			final LoggerContext context = (LoggerContext) factory;
+
+			final ZkAppenderBase zkAppender = new ZkAppenderBase(queue);
+			zkAppender.setContext(context);
+			zkAppender.start();
+			
+			final List<ch.qos.logback.classic.Logger> orgApacheLoggers = context.getLoggerList().stream()
+				.filter(Objects::nonNull)
+				.filter( (appender) -> appender.getName().startsWith("org.apache") == true )
+				.toList();
+			
+			for (final ch.qos.logback.classic.Logger logger : orgApacheLoggers) {
+				
+				final Iterator<Appender<ILoggingEvent>> it = logger.iteratorForAppenders();
+				
+				boolean foundZkAppender = false;
+				
+				while (it.hasNext()) {
+					
+					final Appender<ILoggingEvent> appender = it.next();
+				
+					if (appender instanceof ZkAppenderBase) {
+						
+						foundZkAppender = true;
+					}
+					else {
+					
+						//appender.stop();
+					
+						logger.detachAppender(appender);					
+					}
+				}
+				
+				if (foundZkAppender == false) {
+					
+					logger.addAppender(zkAppender);
+				}
+			}
 		}
 	}
 }

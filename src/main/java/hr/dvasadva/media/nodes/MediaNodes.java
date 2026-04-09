@@ -45,6 +45,22 @@ public class MediaNodes {
 	public static void main(final String[] args) throws IOException, InterruptedException {
 
 		//
+		// Show program version.
+		//
+		
+		final GitProperties gitProperties = new GitProperties();
+		final Properties programProperties = gitProperties.read();
+		
+		log.info(String.format("Media Nodes v%s", programProperties.getProperty("git.build.version")));
+		log.info(String.format("Built on '%s' at %s. Branch '%s', commit '%s'.", 
+				programProperties.getProperty("git.build.host"), 
+				programProperties.getProperty("git.build.time"),
+				programProperties.getProperty("git.branch"),
+				programProperties.getProperty("git.commit.id.abbrev")
+				)
+			);
+		
+		//
 		// First configure the default values.
 		//
 		

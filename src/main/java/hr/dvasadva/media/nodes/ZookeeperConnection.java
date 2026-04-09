@@ -14,6 +14,7 @@ import org.apache.zookeeper.client.ZKClientConfig;
 import org.apache.zookeeper.ZKUtil;
 import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
+import org.apache.zookeeper.ZooKeeper.States;
 import org.apache.zookeeper.data.ACL;
 import org.apache.zookeeper.data.ClientInfo;
 import org.apache.zookeeper.data.Id;
@@ -30,6 +31,8 @@ public class ZookeeperConnection implements AutoCloseable {
 	private final ZooKeeper zookeeper; 
 	
 	private final String connectionString;
+	
+	private boolean isClosed;
 	
 	/**
 	 * New Zookeeper connection instance.
@@ -51,6 +54,8 @@ public class ZookeeperConnection implements AutoCloseable {
 		
 		this.zookeeper = new ZooKeeper(connectionString
 				, sessionTimeout, watcher);		
+		
+		this.isClosed = false;
 	}
 	
 	/**
@@ -357,7 +362,20 @@ public class ZookeeperConnection implements AutoCloseable {
 	public void close() throws InterruptedException {
 
 		this.zookeeper.close();
+		
+		this.isClosed = true;
 	}
+	
+	/**
+	 * Check if somebody invoked {@link #close()} method.
+	 * 
+	 * @return
+	 */
+	public boolean isClosed() {
+		
+		return this.isClosed;
+	}
+	
 	/**
 	 * Returns session identifier.
 	 * 
@@ -430,5 +448,10 @@ public class ZookeeperConnection implements AutoCloseable {
 		}
 		
 		return path.substring(0, lastPos);
+	}
+
+	public States getState() {
+		
+		return this.zookeeper.getState();
 	}
 }
