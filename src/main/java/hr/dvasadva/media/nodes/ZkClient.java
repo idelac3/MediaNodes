@@ -3,8 +3,11 @@ package hr.dvasadva.media.nodes;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -41,7 +44,7 @@ public class ZkClient implements Runnable, Watcher {
 	
 	private ZookeeperConnection zkConn;
 	
-	private boolean watchInstalled;
+	private Map<String, Watcher> watchInstalled;
 	
 	public ZkClient(final Properties prop) {
 	
@@ -50,7 +53,7 @@ public class ZkClient implements Runnable, Watcher {
 		this.result = new ArrayList<>();
 		
 		this.zkConn = null;
-		this.watchInstalled = false;
+		this.watchInstalled = new HashMap<>();
 	}
 	
 	/**
@@ -110,7 +113,7 @@ public class ZkClient implements Runnable, Watcher {
 			
 			clearResult();
 			
-			this.watchInstalled = false;
+			clearInstalledWatches();
 			
 			this.zkConn.close();
 		}
@@ -305,6 +308,31 @@ public class ZkClient implements Runnable, Watcher {
 		}
 	}
 
+	private void clearInstalledWatches() {
+			
+		for (final Entry<String, Watcher> entry : this.watchInstalled.entrySet()) {
+			
+			final String path = entry.getKey();
+			final Watcher watcher = entry.getValue();
+			
+			try {
+			
+				zkConn.removeWatcher(path, watcher);
+			}
+			catch (final KeeperException keeperEx) {
+				
+				log.error(String.format("Unable to remove installed watcher for '%s'.", path), keeperEx);
+			}
+			catch (final InterruptedException interruptedEx) {
+				
+				log.error(String.format("Interrupted while removing installed watcher for '%s'.", path));
+			}
+		}
+		
+		this.watchInstalled.clear();
+		
+	}
+	
 	private void getMediaRecorderNodeList(final String mediaRecorderZnode) {
 
 		try {
@@ -398,16 +426,21 @@ public class ZkClient implements Runnable, Watcher {
 				getMediaRecorderNodeList(mediaRecorderZnode);
 			}
 			
-			if (this.watchInstalled == false) {
+			if (Objects.equals(KeeperState.SyncConnected, event.getState()) == true) {
 			
-				zkConn.addWatcher(mediaRecorderZnode, (event0) -> getMediaRecorderNodeList(mediaRecorderZnode) );
-				this.watchInstalled = true; // Don't install watch more than once.
+				clearInstalledWatches();
+				
+				final Watcher watcher = (event0) -> getMediaRecorderNodeList(mediaRecorderZnode);
+				
+				zkConn.addWatcher(mediaRecorderZnode, watcher);
+				
+				this.watchInstalled.put(mediaRecorderZnode, watcher);
 				
 				log.info(String.format("Watching '%s' znode.", mediaRecorderZnode));
 			}
 			else {
 				
-				log.warn(String.format("Already watching '%s' znode." , mediaRecorderZnode));
+				log.warn(String.format("Got event '%s' for '%s' znode.", event.getState(), mediaRecorderZnode));
 			}
 		}		 
 		catch (final KeeperException keeperException) {

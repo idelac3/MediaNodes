@@ -6,7 +6,7 @@
 
 	<groupId>hr.dvasadva.zookeeper</groupId>
 	<artifactId>media-nodes</artifactId>
-	<version>0.0.2</version>
+	<version>0.0.3</version>
 
 	<description>Simple Zookeeper client that can provide a list of the nodes connected to the Zookeeper.</description>
 
