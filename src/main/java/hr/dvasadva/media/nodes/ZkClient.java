@@ -355,7 +355,9 @@ public class ZkClient implements Runnable, Watcher {
 			if (result.size() > 0) {
 				
 				final String list = result.stream()
+						.filter(Objects::nonNull)
 						.map(String::new)
+						.filter( (str) -> str.length() > 0)
 						.collect(Collectors.joining(", "));
 				
 				log.info(
